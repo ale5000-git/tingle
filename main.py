@@ -574,7 +574,8 @@ def main_patch_framework_jar():
     #
     # Reassemble it
     print_(" *** Reassembling classes...")
-    os.makedirs("out/")
+    if not os.path.exists("out"):
+        os.makedirs("out/")
     #
     try:
         assemble(smali_folder, "out/"+dex_filename, DEVICE_SDK, True)
@@ -594,6 +595,9 @@ def main_patch_framework_jar():
     # Backup the original file
     BACKUP_FILE = os.path.join(OUTPUT_PATH, "framework.jar.backup")
     safe_copy(os.path.join(TMP_DIR, "framework.jar"), BACKUP_FILE)
+    print_(os.linesep + "Your original framework file is present at "+BACKUP_FILE)
+    if mode != 3:
+        print_(os.linesep + "If your device bootloop, please run this command on the pc when the connected device is inside recovery:" + os.linesep + "adb push \""+BACKUP_FILE+"\" /system/framework/framework.jar")
     #
     # Put classes back in the archive
     print_(" *** Recompressing framework...")
@@ -606,7 +610,29 @@ def main_patch_framework_jar():
     # Clean up "framework.jar" disassembly folder.
     print_(" *** Deleting temporary directory:", TMP_DIR+"/smali-classes")
     deltree(TMP_DIR+"/smali-classes")
-
+    #
+    # Push patched file to device if selected.
+    if mode == 1:
+        enable_device_writing(SELECTED_DEVICE)
+        # Push to device
+        print_(" *** Pushing changes to the device...")
+        try:
+            if not DEBUG_PROCESS:
+                output = subprocess.check_output([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "push", "framework.jar", "/system/framework/framework.jar"], stderr=subprocess.STDOUT)
+                debug(output.decode("utf-8").rstrip())
+        except subprocess.CalledProcessError as e:
+            output = e.output.decode("utf-8")
+            debug(output.strip())
+            if e.returncode == 1 and "No space left on device" in output:
+                warning("Pushing has failed, we will retry from the recovery.")
+                subprocess.check_call([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "reboot", "recovery"])
+                subprocess.check_call([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "wait-for-device"])
+                enable_device_writing(SELECTED_DEVICE)
+                subprocess.check_output([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "push", "framework.jar", "/system/framework/framework.jar"])
+            else:
+                raise
+        # Kill ADB server
+        subprocess.check_call([DEPS_PATH["adb"], "kill-server"])
 
 
 
@@ -697,7 +723,8 @@ def main_patch_services_jar():
     #
     # Reassemble it
     print_(" *** Reassembling classes...")
-    os.makedirs("out/")
+    if not os.path.exists("out"):
+        os.makedirs("out/")
     #
     try:
         assemble(smali_folder, "out/"+dex_filename, DEVICE_SDK, True)
@@ -717,6 +744,9 @@ def main_patch_services_jar():
     # Backup the original file
     BACKUP_FILE = os.path.join(OUTPUT_PATH, "services.jar.backup")
     safe_copy(os.path.join(TMP_DIR, "services.jar"), BACKUP_FILE)
+    print_(os.linesep + "Your original services file is present at "+BACKUP_FILE)
+    if mode != 3:
+        print_(os.linesep + "If your device bootloop, please run this command on the pc when the connected device is inside recovery:" + os.linesep + "adb push \""+BACKUP_FILE+"\" /system/framework/services.jar")
     #
     # Put classes back in the archive
     print_(" *** Recompressing services...")
@@ -727,9 +757,31 @@ def main_patch_services_jar():
     safe_copy(os.path.join(TMP_DIR, "services.jar"), os.path.join(OUTPUT_PATH, "services.jar"))
     #
     # Clean up "framework.jar" disassembly folder.
-    print_(" *** Deleting temporary directory:", TMP_DIR+"/smali-classes")
-    deltree(TMP_DIR+"/smali-classes")
-
+    #print_(" *** Deleting temporary directory:", TMP_DIR+"/smali-classes")
+    #deltree(TMP_DIR+"/smali-classes")
+    #
+    # Push patched file to device if selected.
+    if mode == 1:
+        enable_device_writing(SELECTED_DEVICE)
+        # Push to device
+        print_(" *** Pushing changes to the device...")
+        try:
+            if not DEBUG_PROCESS:
+                output = subprocess.check_output([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "push", "services.jar", "/system/framework/services.jar"], stderr=subprocess.STDOUT)
+                debug(output.decode("utf-8").rstrip())
+        except subprocess.CalledProcessError as e:
+            output = e.output.decode("utf-8")
+            debug(output.strip())
+            if e.returncode == 1 and "No space left on device" in output:
+                warning("Pushing has failed, we will retry from the recovery.")
+                subprocess.check_call([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "reboot", "recovery"])
+                subprocess.check_call([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "wait-for-device"])
+                enable_device_writing(SELECTED_DEVICE)
+                subprocess.check_output([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "push", "services.jar", "/system/framework/services.jar"])
+            else:
+                raise
+        # Kill ADB server
+        subprocess.check_call([DEPS_PATH["adb"], "kill-server"])
 
 
 
@@ -790,75 +842,25 @@ if os.path.exists("build.prop"):
     print_(" *** Device SDK:", DEVICE_SDK)
 
 
-
 #
 # Call the cumulative function for patching "framework.jar".
 #
-# main_patch_framework_jar()
-#
+main_patch_framework_jar()
 
 
+
 #
-# new
 # Call the cumulative function for patching "services.jar".
 #
 main_patch_services_jar()
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #
-# original code footer.
+# End of Script.
 #
-if mode == 1:
-    enable_device_writing(SELECTED_DEVICE)
-    # Push to device
-    print_(" *** Pushing changes to the device...")
-    try:
-        if not DEBUG_PROCESS:
-            output = subprocess.check_output([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "push", "framework.jar", "/system/framework/framework.jar"], stderr=subprocess.STDOUT)
-            debug(output.decode("utf-8").rstrip())
-    except subprocess.CalledProcessError as e:
-        output = e.output.decode("utf-8")
-        debug(output.strip())
-        if e.returncode == 1 and "No space left on device" in output:
-            warning("Pushing has failed, we will retry from the recovery.")
-            subprocess.check_call([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "reboot", "recovery"])
-            subprocess.check_call([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "wait-for-device"])
-            enable_device_writing(SELECTED_DEVICE)
-            subprocess.check_output([DEPS_PATH["adb"], "-s", SELECTED_DEVICE, "push", "framework.jar", "/system/framework/framework.jar"])
-        else:
-            raise
-    # Kill ADB server
-    subprocess.check_call([DEPS_PATH["adb"], "kill-server"])
-
 print_(" *** All done! :)")
+if mode == 3:
+    print_(os.linesep + "Now you should replace the file(s) on your system with the patched file in the output folder.")
 
-print_(os.linesep + "Your original file is present at "+BACKUP_FILE)
-if mode != 3:
-    print_(os.linesep + "If your device bootloop, please run this command on the pc when the connected device is inside recovery:" + os.linesep + "adb push \""+BACKUP_FILE+"\" /system/framework/framework.jar")
-else:
-    print_(os.linesep + "Now you should replace the file on your system with the patched file in the output folder.")
+
