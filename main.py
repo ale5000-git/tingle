@@ -672,7 +672,7 @@ def main_patch_services_jar():
     in_function = False
     required_line_before = False
     right_line = False
-    start_of_line = None
+    # start_of_line = None
     done_patching = False
     partially_patched = False
     #
