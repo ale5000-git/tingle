@@ -9,7 +9,7 @@ import tempfile
 import shutil
 
 __app__ = "Tingle"
-__author__ = "ale5000, moosd"
+__author__ = "ale5000, moosd, catfriend1"
 
 DEPS_PATH = {}
 DEBUG_PROCESS = False
@@ -44,6 +44,11 @@ def init():
 
     # Register exit handler
     atexit.register(on_exit)
+
+def os_pause():
+	if sys.platform == "win32" and not DUMB_MODE:
+		import msvcrt
+		msvcrt.getch()  # Wait a keypress before exit (useful when the script is running from a double click)
 
 
 def on_exit():
@@ -92,6 +97,12 @@ def handle_dependencies(deps_path, mode):
 
 def remove_ext(filename):
     return filename.rsplit(".", 1)[0]
+
+
+def deltree(path):
+    import shutil
+    if path is not None:
+        shutil.rmtree(path)
 
 
 def debug(text):
@@ -337,14 +348,25 @@ def brew_input_file(mode, chosen_one):
         print_(" *** Pulling framework from device...")
         try:
             safe_subprocess_run([DEPS_PATH["adb"], "-s", chosen_one, "pull", "/system/framework/framework.jar", "."])
+            
+            # new
+            safe_subprocess_run([DEPS_PATH["adb"], "-s", chosen_one, "pull", "/system/framework/services.jar", "."])
+            
             safe_subprocess_run([DEPS_PATH["adb"], "-s", chosen_one, "pull", "/system/build.prop", "."])
         except (subprocess.CalledProcessError, OSError):
             exit_now(90)
     elif mode == 2:
         if not os.path.exists(SCRIPT_DIR+"/input/framework.jar"):
-            print_(os.linesep+"ERROR: The input file cannot be found.")
+            print_(os.linesep+"ERROR: The input file framework.jar cannot be found.")
             exit_now(91)
         safe_copy(SCRIPT_DIR+"/input/framework.jar", TMP_DIR+"/framework.jar")
+
+        # new
+        if not os.path.exists(SCRIPT_DIR+"/input/services.jar"):
+            print_(os.linesep+"ERROR: The input file services.jar cannot be found.")
+            exit_now(91)
+        safe_copy(SCRIPT_DIR+"/input/services.jar", TMP_DIR+"/services.jar")
+        
         safe_copy(SCRIPT_DIR+"/input/build.prop", TMP_DIR+"/build.prop")
     else:
         safe_copy("/system/framework/framework.jar", TMP_DIR+"/framework.jar")
@@ -448,6 +470,278 @@ def move_methods_workaround(dex_filename, dex_filename_last, in_dir, out_dir, de
         subprocess.check_call(["attrib", "-a", out_dir+dex_filename_last])
 
 
+
+
+#
+# Main patch functions putting all together.
+#
+#
+# FUNCTION - main_patch_framework_jar
+# 
+def main_patch_framework_jar():
+    print_(" *** Decompressing framework...")
+    decompress("framework.jar", "framework/")
+    #
+    # Disassemble it
+    print_(" *** Disassembling framework classes...")
+    smali_to_search = "android/content/pm/PackageParser.smali"
+    smali_folder, dex_filename, dex_filename_last = find_smali(smali_to_search, "framework/", DEVICE_SDK)
+    #
+    # Check the existence of the file to patch
+    if smali_folder is None:
+        print_(os.linesep+"ERROR: The file to patch cannot be found, please report the problem.")
+        exit_now(82)
+    to_patch = smali_folder+smali_to_search
+    #
+    # Do the injection
+    print_(" *** Patching framework ...")
+    f = open(to_patch, "r")
+    old_contents = f.readlines()
+    f.close()
+    #
+    f = open(SCRIPT_DIR+"/patches/fillinsig.smali", "r")
+    fillinsig = f.readlines()
+    f.close()
+    #
+    # framework_classes - Add fillinsig method
+    i = 0
+    contents = []
+    already_patched = False
+    in_function = False
+    right_line = False
+    start_of_line = None
+    done_patching = False
+    stored_register = "v11"
+    partially_patched = False
+    #
+    while i < len(old_contents):
+        if ";->fillinsig" in old_contents[i]:
+            already_patched = True
+        if ".method public static fillinsig" in old_contents[i]:
+            partially_patched = True
+        if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLjava/util/Set;Landroid/content/pm/PackageUserState;I)Landroid/content/pm/PackageInfo;" in old_contents[i]:
+            print_(" *** Detected: Android 8.x / 7.x / 6.x (or LOS/CM 13-15)")
+            in_function = True
+        if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLandroid/util/ArraySet;Landroid/content/pm/PackageUserState;I)Landroid/content/pm/PackageInfo;" in old_contents[i]:
+            print_(" *** Detected: Android 5.x (or CM 12)")
+            in_function = True
+        if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLjava/util/HashSet;Landroid/content/pm/PackageUserState;I)Landroid/content/pm/PackageInfo;" in old_contents[i]:
+            print_(" *** Detected: Android 4.4.x (or CM 10-11)")
+            in_function = True
+        if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJ)Landroid/content/pm/PackageInfo;" in old_contents[i]:
+            print_(" *** Detected: CM 7-9 - UNTESTED")
+            in_function = True
+        if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[II)Landroid/content/pm/PackageInfo;" in old_contents[i]:
+            print_(" *** Detected: CM 6 - UNTESTED")
+            in_function = True
+        if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLjava/util/HashSet;ZII)Landroid/content/pm/PackageInfo;" in old_contents[i]:
+            print_(" *** Detected: Alien Dalvik (Sailfish OS)")
+            in_function = True
+        if ".end method" in old_contents[i]:
+            in_function = False
+        if in_function and ".line" in old_contents[i]:
+            start_of_line = i + 1
+        if in_function and "arraycopy" in old_contents[i]:
+            right_line = True
+        if in_function and "Landroid/content/pm/PackageInfo;-><init>()V" in old_contents[i]:
+            stored_register = old_contents[i].split("{")[1].split("}")[0]
+        if not already_patched and in_function and right_line and not done_patching:
+            contents = contents[:start_of_line]
+            contents.append("move-object/from16 v0, p0\n")
+            contents.append("invoke-static {%s, v0}, Landroid/content/pm/PackageParser;->fillinsig(Landroid/content/pm/PackageInfo;Landroid/content/pm/PackageParser$Package;)V\n" % stored_register)
+            done_patching = True
+        else:
+            contents.append(old_contents[i])
+        i = i + 1
+    #
+    if not DEBUG_PROCESS:
+        if already_patched:
+            print_(" *** This file has been already patched... Exiting.")
+            exit_now(0)
+        elif not done_patching:
+            print_(os.linesep+"ERROR: The function to patch cannot be found, probably your version of Android is NOT supported.")
+            exit_now(89)
+        elif partially_patched:
+            print_(" *** Previous failed patch attempt, not including the fillinsig method again...")
+        else:
+            contents.extend(fillinsig)
+
+        f = open(to_patch, "w")
+        contents = "".join(contents)
+        f.write(contents)
+        f.close()
+    print_(" *** Patching framework smali succeeded.")
+    #
+    # Reassemble it
+    print_(" *** Reassembling classes...")
+    os.makedirs("out/")
+    #
+    try:
+        assemble(smali_folder, "out/"+dex_filename, DEVICE_SDK, True)
+        if sys.platform == "win32":
+            subprocess.check_call(["attrib", "-a", "out/"+dex_filename])
+    except subprocess.CalledProcessError as e:  # ToDO: Check e.cmd
+        safe_file_delete(TMP_DIR+"/out/"+dex_filename)  # Remove incomplete file
+        output = e.output.decode("utf-8")
+        if e.returncode != 1 or "Unsigned short value out of range: 65536" not in output:
+            print_(os.linesep+output.strip())
+            print_(os.linesep+"Return code: "+str(e.returncode))
+            exit_now(83)
+        warning("The reassembling has failed (probably we have exceeded the 64K methods limit)")
+        warning("but do NOT worry, we will retry.", False)
+        move_methods_workaround(dex_filename, dex_filename_last, "framework/", "out/", DEVICE_SDK)
+    #
+    # Backup the original file
+    BACKUP_FILE = os.path.join(OUTPUT_PATH, "framework.jar.backup")
+    safe_copy(os.path.join(TMP_DIR, "framework.jar"), BACKUP_FILE)
+    #
+    # Put classes back in the archive
+    print_(" *** Recompressing framework...")
+    compress(os.curdir+"/out/", "framework.jar")
+    #
+    # Copy the patched file to the output folder
+    print_(" *** Copying the patched file to the output folder...")
+    safe_copy(os.path.join(TMP_DIR, "framework.jar"), os.path.join(OUTPUT_PATH, "framework.jar"))
+    #
+    # Clean up "framework.jar" disassembly folder.
+    print_(" *** Deleting temporary directory:", TMP_DIR+"/smali-classes")
+    deltree(TMP_DIR+"/smali-classes")
+
+
+
+
+#
+# FUNCTION - main_patch_services_jar
+#
+def main_patch_services_jar():
+    print_(" *** Decompressing services.jar ...")
+    decompress("services.jar", "services/")
+    #
+    # Disassemble it
+    print_(" *** Disassembling services classes...")
+    smali_to_search = "com/android/server/pm/PackageManagerService.smali"
+    smali_folder, dex_filename, dex_filename_last = find_smali(smali_to_search, "services/", DEVICE_SDK)
+    #
+    # Check the existence of the file to patch
+    if smali_folder is None:
+        print_(os.linesep+"ERROR: The services.jar classes file to patch cannot be found, please report the problem.")
+        exit_now(82)
+    to_patch = smali_folder+smali_to_search
+    #
+    # Do the injection
+    print_(" *** Patching services...")
+    f = open(to_patch, "r")
+    old_contents = f.readlines()
+    f.close()
+    #
+    f = open(SCRIPT_DIR+"/patches/allowsdwrite.smali", "r")
+    allowsdwrite = f.readlines()
+    f.close()
+    #
+    # services_classes - Add allowsdwrite method
+    #       for testing - \smali-classes\com\android\server\pm
+    i = 0
+    contents = []
+    already_patched = False
+    in_function = False
+    required_line_before = False
+    right_line = False
+    start_of_line = None
+    done_patching = False
+    partially_patched = False
+    #
+    while i < len(old_contents):
+        if ";->allowSDWrite" in old_contents[i]:
+            already_patched = True
+        if ".method private allowSDWrite" in old_contents[i]:
+            partially_patched = True
+        if ".method private grantPermissionsLPw(Landroid/content/pm/PackageParser$Package;ZLjava/lang/String;)V" in old_contents[i]:
+            print_(" *** Detected: Android 7.x (or LOS/CM 14)")
+            in_function = True
+        if ".end method" in old_contents[i]:
+            in_function = False
+            required_line_before = False
+        if in_function and "const-wide/32 v26, 0x40000" in old_contents[i]:
+            required_line_before = True
+        if in_function and required_line_before and "invoke-static/range {v26 .. v27}" in old_contents[i]:
+            right_line = True
+            # start_of_line = i+1
+        if not already_patched and in_function and right_line and not done_patching:
+            # contents = contents[:start_of_line]
+            contents.append(old_contents[i])
+            contents.append("move-object/from16 v2, p0\n")
+            contents.append("move-object/from16 v3, p1\n")
+            contents.append("invoke-direct {v2, v3}, Lcom/android/server/pm/PackageManagerService;->allowSDWrite(Landroid/content/pm/PackageParser$Package;)V\n")
+            done_patching = True
+        else:
+            contents.append(old_contents[i])
+        i = i + 1
+    #
+    if not DEBUG_PROCESS:
+        if already_patched:
+            print_(" *** This file has been already patched... Exiting.")
+            exit_now(0)
+        elif not done_patching:
+            print_(os.linesep+"ERROR: The function to patch cannot be found, probably your version of Android is NOT supported.")
+            exit_now(89)
+        elif partially_patched:
+            print_(" *** Previous failed patch attempt, not including the allowsdwrite method again...")
+        else:
+            contents.extend(allowsdwrite)
+
+        f = open(to_patch, "w")
+        contents = "".join(contents)
+        f.write(contents)
+        f.close()
+    print_(" *** Patching succeeded.")
+    #
+    # Reassemble it
+    print_(" *** Reassembling classes...")
+    os.makedirs("out/")
+    #
+    try:
+        assemble(smali_folder, "out/"+dex_filename, DEVICE_SDK, True)
+        if sys.platform == "win32":
+            subprocess.check_call(["attrib", "-a", "out/"+dex_filename])
+    except subprocess.CalledProcessError as e:  # ToDO: Check e.cmd
+        safe_file_delete(TMP_DIR+"/out/"+dex_filename)  # Remove incomplete file
+        output = e.output.decode("utf-8")
+        if e.returncode != 1 or "Unsigned short value out of range: 65536" not in output:
+            print_(os.linesep+output.strip())
+            print_(os.linesep+"Return code: "+str(e.returncode))
+            exit_now(83)
+        warning("The reassembling has failed (probably we have exceeded the 64K methods limit)")
+        warning("but do NOT worry, we will retry.", False)
+        move_methods_workaround(dex_filename, dex_filename_last, "services/", "out/", DEVICE_SDK)
+    #
+    # Backup the original file
+    BACKUP_FILE = os.path.join(OUTPUT_PATH, "services.jar.backup")
+    safe_copy(os.path.join(TMP_DIR, "services.jar"), BACKUP_FILE)
+    #
+    # Put classes back in the archive
+    print_(" *** Recompressing services...")
+    compress(os.curdir+"/out/", "services.jar")
+    #
+    # Copy the patched file to the output folder
+    print_(" *** Copying the patched file to the output folder...")
+    safe_copy(os.path.join(TMP_DIR, "services.jar"), os.path.join(OUTPUT_PATH, "services.jar"))
+    #
+    # Clean up "framework.jar" disassembly folder.
+    print_(" *** Deleting temporary directory:", TMP_DIR+"/smali-classes")
+    deltree(TMP_DIR+"/smali-classes")
+
+
+
+
+
+
+
+
+
+
+#
+# Script Main.
+#
 init()
 
 question = "MENU"+os.linesep+os.linesep+"    1 - Patch file from a device (adb)"+os.linesep+"    2 - Patch file from the input folder"+os.linesep
@@ -495,130 +789,50 @@ if os.path.exists("build.prop"):
     DEVICE_SDK = parse_sdk_ver("build.prop")
     print_(" *** Device SDK:", DEVICE_SDK)
 
-print_(" *** Decompressing framework...")
-decompress("framework.jar", "framework/")
 
-# Disassemble it
-print_(" *** Disassembling classes...")
-smali_to_search = "android/content/pm/PackageParser.smali"
-smali_folder, dex_filename, dex_filename_last = find_smali(smali_to_search, "framework/", DEVICE_SDK)
 
-# Check the existence of the file to patch
-if smali_folder is None:
-    print_(os.linesep+"ERROR: The file to patch cannot be found, please report the problem.")
-    exit_now(82)
-to_patch = smali_folder+smali_to_search
+#
+# Call the cumulative function for patching "framework.jar".
+#
+# main_patch_framework_jar()
+#
 
-# Do the injection
-print_(" *** Patching...")
-f = open(to_patch, "r")
-old_contents = f.readlines()
-f.close()
 
-f = open(SCRIPT_DIR+"/patches/fillinsig.smali", "r")
-fillinsig = f.readlines()
-f.close()
+#
+# new
+# Call the cumulative function for patching "services.jar".
+#
+main_patch_services_jar()
 
-# Add fillinsig method
-i = 0
-contents = []
-already_patched = False
-in_function = False
-right_line = False
-start_of_line = None
-done_patching = False
-stored_register = "v11"
-partially_patched = False
 
-while i < len(old_contents):
-    if ";->fillinsig" in old_contents[i]:
-        already_patched = True
-    if ".method public static fillinsig" in old_contents[i]:
-        partially_patched = True
-    if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLjava/util/Set;Landroid/content/pm/PackageUserState;I)Landroid/content/pm/PackageInfo;" in old_contents[i]:
-        print_(" *** Detected: Android 8.x / 7.x / 6.x (or LOS/CM 13-15)")
-        in_function = True
-    if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLandroid/util/ArraySet;Landroid/content/pm/PackageUserState;I)Landroid/content/pm/PackageInfo;" in old_contents[i]:
-        print_(" *** Detected: Android 5.x (or CM 12)")
-        in_function = True
-    if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLjava/util/HashSet;Landroid/content/pm/PackageUserState;I)Landroid/content/pm/PackageInfo;" in old_contents[i]:
-        print_(" *** Detected: Android 4.4.x (or CM 10-11)")
-        in_function = True
-    if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJ)Landroid/content/pm/PackageInfo;" in old_contents[i]:
-        print_(" *** Detected: CM 7-9 - UNTESTED")
-        in_function = True
-    if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[II)Landroid/content/pm/PackageInfo;" in old_contents[i]:
-        print_(" *** Detected: CM 6 - UNTESTED")
-        in_function = True
-    if ".method public static generatePackageInfo(Landroid/content/pm/PackageParser$Package;[IIJJLjava/util/HashSet;ZII)Landroid/content/pm/PackageInfo;" in old_contents[i]:
-        print_(" *** Detected: Alien Dalvik (Sailfish OS)")
-        in_function = True
-    if ".end method" in old_contents[i]:
-        in_function = False
-    if in_function and ".line" in old_contents[i]:
-        start_of_line = i + 1
-    if in_function and "arraycopy" in old_contents[i]:
-        right_line = True
-    if in_function and "Landroid/content/pm/PackageInfo;-><init>()V" in old_contents[i]:
-        stored_register = old_contents[i].split("{")[1].split("}")[0]
-    if not already_patched and in_function and right_line and not done_patching:
-        contents = contents[:start_of_line]
-        contents.append("move-object/from16 v0, p0\n")
-        contents.append("invoke-static {%s, v0}, Landroid/content/pm/PackageParser;->fillinsig(Landroid/content/pm/PackageInfo;Landroid/content/pm/PackageParser$Package;)V\n" % stored_register)
-        done_patching = True
-    else:
-        contents.append(old_contents[i])
-    i = i + 1
 
-if not DEBUG_PROCESS:
-    if already_patched:
-        print_(" *** This file has been already patched... Exiting.")
-        exit_now(0)
-    elif not done_patching:
-        print_(os.linesep+"ERROR: The function to patch cannot be found, probably your version of Android is NOT supported.")
-        exit_now(89)
-    elif partially_patched:
-        print_(" *** Previous failed patch attempt, not including the fillinsig method again...")
-    else:
-        contents.extend(fillinsig)
 
-    f = open(to_patch, "w")
-    contents = "".join(contents)
-    f.write(contents)
-    f.close()
-print_(" *** Patching succeeded.")
 
-# Reassemble it
-print_(" *** Reassembling classes...")
-os.makedirs("out/")
 
-try:
-    assemble(smali_folder, "out/"+dex_filename, DEVICE_SDK, True)
-    if sys.platform == "win32":
-        subprocess.check_call(["attrib", "-a", "out/"+dex_filename])
-except subprocess.CalledProcessError as e:  # ToDO: Check e.cmd
-    safe_file_delete(TMP_DIR+"/out/"+dex_filename)  # Remove incomplete file
-    output = e.output.decode("utf-8")
-    if e.returncode != 1 or "Unsigned short value out of range: 65536" not in output:
-        print_(os.linesep+output.strip())
-        print_(os.linesep+"Return code: "+str(e.returncode))
-        exit_now(83)
-    warning("The reassembling has failed (probably we have exceeded the 64K methods limit)")
-    warning("but do NOT worry, we will retry.", False)
-    move_methods_workaround(dex_filename, dex_filename_last, "framework/", "out/", DEVICE_SDK)
 
-# Backup the original file
-BACKUP_FILE = os.path.join(OUTPUT_PATH, "framework.jar.backup")
-safe_copy(os.path.join(TMP_DIR, "framework.jar"), BACKUP_FILE)
 
-# Put classes back in the archive
-print_(" *** Recompressing framework...")
-compress(os.curdir+"/out/", "framework.jar")
 
-# Copy the patched file to the output folder
-print_(" *** Copying the patched file to the output folder...")
-safe_copy(os.path.join(TMP_DIR, "framework.jar"), os.path.join(OUTPUT_PATH, "framework.jar"))
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#
+# original code footer.
+#
 if mode == 1:
     enable_device_writing(SELECTED_DEVICE)
     # Push to device
