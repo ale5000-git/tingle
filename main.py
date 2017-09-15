@@ -348,25 +348,30 @@ def brew_input_file(mode, chosen_one):
         print_(" *** Pulling framework from device...")
         try:
             safe_subprocess_run([DEPS_PATH["adb"], "-s", chosen_one, "pull", "/system/framework/framework.jar", "."])
-            
+
             # new
             safe_subprocess_run([DEPS_PATH["adb"], "-s", chosen_one, "pull", "/system/framework/services.jar", "."])
-            
+
             safe_subprocess_run([DEPS_PATH["adb"], "-s", chosen_one, "pull", "/system/build.prop", "."])
         except (subprocess.CalledProcessError, OSError):
             exit_now(90)
     elif mode == 2:
-        if not os.path.exists(SCRIPT_DIR+"/input/framework.jar"):
-            print_(os.linesep+"ERROR: The input file framework.jar cannot be found.")
-            exit_now(91)
-        safe_copy(SCRIPT_DIR+"/input/framework.jar", TMP_DIR+"/framework.jar")
-
-        # new
-        if not os.path.exists(SCRIPT_DIR+"/input/services.jar"):
-            print_(os.linesep+"ERROR: The input file services.jar cannot be found.")
-            exit_now(91)
-        safe_copy(SCRIPT_DIR+"/input/services.jar", TMP_DIR+"/services.jar")
-        
+        #
+        # Check for existing framework.jar only if we have to patch it.
+        if ((cfgPatchWhat == 1) or (cfgPatchWhat == 3)):
+            if not os.path.exists(SCRIPT_DIR+"/input/framework.jar"):
+                print_(os.linesep+"ERROR: The input file framework.jar cannot be found.")
+                exit_now(91)
+            safe_copy(SCRIPT_DIR+"/input/framework.jar", TMP_DIR+"/framework.jar")
+        #
+        # Check for existing services.jar only if we have to patch it.
+        if ((cfgPatchWhat == 2) or (cfgPatchWhat == 3)):
+            if not os.path.exists(SCRIPT_DIR+"/input/services.jar"):
+                print_(os.linesep+"ERROR: The input file services.jar cannot be found.")
+                exit_now(91)
+            safe_copy(SCRIPT_DIR+"/input/services.jar", TMP_DIR+"/services.jar")
+        #
+        # Always check for existing build.prop
         safe_copy(SCRIPT_DIR+"/input/build.prop", TMP_DIR+"/build.prop")
     else:
         safe_copy("/system/framework/framework.jar", TMP_DIR+"/framework.jar")
@@ -477,7 +482,7 @@ def move_methods_workaround(dex_filename, dex_filename_last, in_dir, out_dir, de
 #
 #
 # FUNCTION - main_patch_framework_jar
-# 
+#
 def main_patch_framework_jar():
     print_(" *** Decompressing framework...")
     decompress("framework.jar", "framework/")
@@ -703,6 +708,49 @@ def main_patch_services_jar():
             contents.append(old_contents[i])
         i = i + 1
     #
+    # Did we succeed with the Android 7.x patch?
+    if ((not done_patching) and (not partially_patched) and (not already_patched)):
+        #
+	# UNSUCCESSFUL - Retry alternative Android 6.x patch
+        print_(" *** Trying to detect Android 6.x (or LOS/CM 13)")
+	#
+        i = 0
+        contents = []
+        already_patched = False
+        in_function = False
+        required_line_before = False
+        right_line = False
+        done_patching = False
+        partially_patched = False
+        targetLine = False
+        #
+        while i < len(old_contents):
+            if ";->allowSDWrite" in old_contents[i]:
+                    already_patched = True
+            if ".method private allowSDWrite" in old_contents[i]:
+                    partially_patched = True
+            if ".method private grantPermissionsLPw(Landroid/content/pm/PackageParser$Package;ZLjava/lang/String;)V" in old_contents[i]:
+                    print(" *** Detected: Android 6.x (or LOS/CM 13)")
+                    in_function = True
+            if ".end method" in old_contents[i]:
+                    in_function = False
+                    required_line_before = False
+                    targetLine = False
+            if in_function and "Lcom/android/server/pm/Settings;->writeRuntimePermissionsForUserLPr" in old_contents[i]:
+                    targetLine = True
+            if in_function and targetLine and "return-void" in old_contents[i]:
+                    right_line = True
+            if not already_patched and in_function and right_line and not done_patching:
+                    contents.append("move-object/from16 v2, p0\n")
+                    contents.append("move-object/from16 v3, p1\n")
+                    contents.append("invoke-direct {v2, v3}, Lcom/android/server/pm/PackageManagerService;->allowSDWrite(Landroid/content/pm/PackageParser$Package;)V\n")
+                    contents.append(old_contents[i])
+                    done_patching = True
+            else:
+                    contents.append(old_contents[i])
+            i = i + 1
+    #
+    # Sum up the results and log message.
     if not DEBUG_PROCESS:
         if already_patched:
             print_(" *** This file has been already patched... Exiting.")
@@ -719,7 +767,8 @@ def main_patch_services_jar():
         contents = "".join(contents)
         f.write(contents)
         f.close()
-    print_(" *** Patching succeeded.")
+
+
     #
     # Reassemble it
     print_(" *** Reassembling classes...")
@@ -791,16 +840,36 @@ def main_patch_services_jar():
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #
 # Script Main.
 #
 init()
-
-question = "MENU"+os.linesep+os.linesep+"    1 - Patch file from a device (adb)"+os.linesep+"    2 - Patch file from the input folder"+os.linesep
+#
+# Display Main Menu - User selects "how to patch".
+question = "MAIN-MENU"+os.linesep+os.linesep+"    1 - Patch file from a device (adb)"+os.linesep+"    2 - Patch file from the input folder"+os.linesep
 if sys.platform == "linux-android":
     question += "    3 - Patch file directly from the device"+os.linesep
 mode = user_question(question, 3, 2)
-
+#
+# Display Sub Menu - User select "what to patch".
+question = "SUB-MENU"+os.linesep+os.linesep+"    1 - Patch framework.jar"+os.linesep+"    2 - Patch services.jar"+os.linesep+"    3 - Patch framework.jar and services.jar"+os.linesep
+cfgPatchWhat = user_question(question, 3, 2)
+#
+# Handle dependencies.
 handle_dependencies(DEPS_PATH, mode)
 
 SELECTED_DEVICE = "ManualMode"
@@ -843,16 +912,14 @@ if os.path.exists("build.prop"):
 
 
 #
-# Call the cumulative function for patching "framework.jar".
-#
-main_patch_framework_jar()
+# Check which patches the user selected before from the sub-manu.
+if ((cfgPatchWhat == 1) or (cfgPatchWhat == 3)):
+    # Patch framework.jar.
+    main_patch_framework_jar()
 
-
-
-#
-# Call the cumulative function for patching "services.jar".
-#
-main_patch_services_jar()
+if ((cfgPatchWhat == 2) or (cfgPatchWhat == 3)):
+    # Patch services.jar.
+    main_patch_services_jar()
 
 
 
