@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 import shutil
+import hashlib
 
 __app__ = "Tingle"
 __author__ = "ale5000, moosd"
@@ -554,12 +555,14 @@ mode = user_question(question, 3, 2)
 handle_dependencies(DEPS_PATH, mode)
 
 SELECTED_DEVICE = "ManualMode"
+DEVICE_HASH = SELECTED_DEVICE
 if mode == 1:
     if safe_subprocess_run([DEPS_PATH["adb"], "version"], False) == False:
         print_(os.linesep+"ERROR: ADB is not setup correctly.")
         exit_now(92)
 
     SELECTED_DEVICE = select_device()
+    DEVICE_HASH = hashlib.sha224(SELECTED_DEVICE.encode("utf-8")).hexdigest()
     if DEBUG_PROCESS:
         print_(" *** NOTE: Running in debug mode, WILL NOT ACTUALLY PATCH AND PUSH TO DEVICE")
 
@@ -574,7 +577,7 @@ print_(str(" *** Working dir: {0}").format(TMP_DIR))
 if mode == 1:
     print_(" *** Selected device:", SELECTED_DEVICE)
 
-OUTPUT_PATH = os.path.join(SCRIPT_DIR, "output", SELECTED_DEVICE)
+OUTPUT_PATH = os.path.join(SCRIPT_DIR, "output", DEVICE_HASH)
 if not os.path.exists(OUTPUT_PATH):
     os.makedirs(OUTPUT_PATH)
 
