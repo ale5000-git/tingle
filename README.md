@@ -2,13 +2,15 @@
 [![GitHub release](https://img.shields.io/github/release/ale5000-git/tingle.svg)](https://github.com/ale5000-git/tingle/releases/latest)
 [![License](https://img.shields.io/github/license/ale5000-git/tingle.svg)](https://github.com/ale5000-git/tingle)
 [![Build Status](https://travis-ci.com/ale5000-git/tingle.svg?branch=master)](https://travis-ci.com/ale5000-git/tingle)
-[![Bountysource](https://img.shields.io/bountysource/team/tingle-patcher/activity.svg)](https://www.bountysource.com/teams/tingle-patcher)
 [![Liberapay receiving](https://img.shields.io/liberapay/receives/Tingle.svg)](https://liberapay.com/Tingle/)
 
 ## What this does
 This will allow you to patch the Android system and inject features without needing to recompile the OS or install Xposed.
 
 Notably, it is made to inject support for signature spoofing into the system so it can spoof Android app signatures (useful for [microG](https://microg.org/)).
+
+## Download
+Download it [here](https://api.github.com/repos/ale5000-git/tingle/zipball/).
 
 ## Donations
 [![Donate](https://liberapay.com/assets/widgets/donate.svg)](https://liberapay.com/Tingle/donate "Donate using Liberapay")
